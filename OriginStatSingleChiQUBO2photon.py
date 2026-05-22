@@ -27,18 +27,24 @@ import matplotlib as mpl
 from sklearn.cluster import KMeans
 import matplotlib.transforms as mtransforms
 
+import random
 import matplotlib
 matplotlib.use('Agg') 
 from dwave.system import DWaveSampler, EmbeddingComposite
 # --- [설정값: 모든 프로세스가 공유] ---
 #STRIP_Z_LIST = [1.0, 1.7, 2.4, 4.4, 6.4, 8.4]
-STRIP_Z_LIST = [2.3, 4.3, 6.3, 8.3, 10.3]
+STRIP_Z_LIST = [1.3, 3.3, 5.3, 7.3, 9.3, 11.3, 13.3, 15.3, 17.3, 19.3]
 STRIP_POS = np.linspace(-5.0 + (10.0/128)/2, 5.0 - (10.0/128)/2, 128)
 PAD_SIZE = 1.0
-OUTPUT_DIR = "QUBO_VisualizeV4_DoublePhoton"
+OUTPUT_DIR = "QUBO_WOclustering_RealDoublePhoton_10lay"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 import matplotlib.cm as cm # 구버전 호환용
+
+# --- [기존 유틸리티 함수] ---
+def to_stereo(x, y):
+    inv_sqrt2 = 0.70710678
+    return (x - y) * inv_sqrt2, (x + y) * inv_sqrt2
 
 def plot_event_layers(csi_pool, ransac_pool, t_infos, event_id="Unknown"):
     """
@@ -46,43 +52,47 @@ def plot_event_layers(csi_pool, ransac_pool, t_infos, event_id="Unknown"):
     ransac_pool: [[z, x, y, 0, 0], ...]
     t_infos: MC Truth 정보 (pos, vec 포함)
     """
-    # 2x3 레이아웃 (5개 레이어 + 1개 빈칸)
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12), sharex=True, sharey=True)
-    fig.suptitle(f"Event Display: CsI & RWELL with MC Truth (Event: {event_id})", fontsize=16)
+    # [변경] 2x5 레이아웃 (총 10개 레이어)
+    fig, axes = plt.subplots(2, 5, figsize=(25, 10), sharex=True, sharey=True)
+    fig.suptitle(f"Event Display: CsI & RWELL with MC Truth (10 Layers, Event: {event_id})", fontsize=16)
 
     axes_flat = axes.flatten()
 
     if len(csi_pool) == 0 and len(ransac_pool) == 0:
         plt.close()
         return
-    # 컬러맵 설정 (구버전 호환 및 복사본 사용)
+
+    # 컬러맵 설정
     try:
         import matplotlib as mpl
         cmap = mpl.colormaps['YlOrRd'].copy()
     except:
         import copy
+        from matplotlib import cm
         cmap = copy.copy(cm.get_cmap('YlOrRd'))
     cmap.set_bad(color='white')
     
     csi_np = np.array(csi_pool) if len(csi_pool) > 0 else np.array([])
     rwell_np = np.array(ransac_pool) if len(ransac_pool) > 0 else np.array([])
-    
     max_energy = csi_np[:, 3].max() if len(csi_np) > 0 else 1.0
 
-    for i in range(6):
+    # [변경] 루프 범위를 10으로 확대
+    for i in range(10):
         ax = axes_flat[i]
-        if i < 5:
-            # [최적화 2] 유동적 rwell_zs[i] 대신 고정된 물리 좌표 사용
+        
+        # STRIP_Z_LIST에 10개 이상의 데이터가 있는지 확인
+        if i < len(STRIP_Z_LIST):
             curr_z = STRIP_Z_LIST[i]
             
             # --- [Part 1: CsI 에너지 플롯] ---
             if csi_np.size > 0:
-                # 물리적 RWELL Z보다 살짝 앞(0 < dz < 1.5)에 있는 CsI 데이터 필터링
-                diff = csi_np[:, 0] - curr_z
+                diff = curr_z - csi_np[:, 0]
                 mask = (diff > 0) & (diff < 1.5)
                 layer_csi = csi_np[mask]
                 
                 if len(layer_csi) > 0:
+                    from matplotlib.collections import PatchCollection
+                    import matplotlib.patches as patches
                     rects = [patches.Rectangle((row[1]-0.5, row[2]-0.5), 1.0, 1.0) for row in layer_csi]
                     pc = PatchCollection(rects, cmap=cmap, alpha=0.7, edgecolors='gray', linewidths=0.5)
                     pc.set_array(layer_csi[:, 3])
@@ -91,7 +101,6 @@ def plot_event_layers(csi_pool, ransac_pool, t_infos, event_id="Unknown"):
 
             # --- [Part 2: RWELL 히트 플롯] ---
             if rwell_np.size > 0:
-                # 고정된 curr_z와 일치하는 히트만 플롯
                 mask = np.isclose(rwell_np[:, 0].astype(float), float(curr_z))
                 layer_rwell = rwell_np[mask]
                 if len(layer_rwell) > 0:
@@ -106,40 +115,38 @@ def plot_event_layers(csi_pool, ransac_pool, t_infos, event_id="Unknown"):
                     tx, ty = p0[0] + vec[0] * scale, p0[1] + vec[1] * scale
                     ax.scatter(tx, ty, s=200, edgecolors='black', facecolors='none', marker='*', linewidths=1.5)
 
-            # [핵심] 이제 curr_z는 항상 숫자이므로 포맷팅 에러가 절대 안 남
-            ax.set_title(f"Layer {i+1} (z={curr_z:.1f}cm)")
+            ax.set_title(f"L{i+1} (z={curr_z:.1f}cm)", fontsize=10)
             ax.grid(True, linestyle=':', alpha=0.5)
-            ax.set_xlim(-6, 6)
-            ax.set_ylim(-6, 6)
         else:
-            ax.axis('off')
+            ax.axis('off') # Z 리스트보다 인덱스가 크면 빈 칸 처리
 
         # 공통 축 설정
         ax.set_xlim(-6, 6)
         ax.set_ylim(-6, 6)
-        if i >= 3: ax.set_xlabel("X [cm]")
-        if i % 3 == 0: ax.set_ylabel("Y [cm]")
+        if i >= 5: ax.set_xlabel("X [cm]") # 아래쪽 행
+        if i % 5 == 0: ax.set_ylabel("Y [cm]") # 왼쪽 열
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(f"{OUTPUT_DIR}/event_{event_id.replace('.root', '')}_fixed.png")
+    plt.savefig(f"{OUTPUT_DIR}/event_{event_id.replace('.root', '')}_10layers.png")
     plt.close()
 
-# --- [기존 유틸리티 함수] ---
-def to_stereo(x, y):
-    inv_sqrt2 = 0.70710678
-    return (x - y) * inv_sqrt2, (x + y) * inv_sqrt2
-
 def plot_debug_event(evt_id, ransac_pool, kf_pts_labeled, t_infos, errors):
-    """kf_pts_labeled: [z, x, y, pid] 형태의 넘파이 배열"""
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    """
+    [변경] 디버그 플롯도 10개 레이어(2x5)로 확장
+    """
+    fig, axes = plt.subplots(2, 5, figsize=(20, 10))
     axes = axes.flatten()
     
-    # 컬러맵 설정 (Photon 0: Red, Photon 1: Green)
-    reco_colors = ['red', 'green']
-    truth_colors = ['blue', 'cyan']
+    reco_colors = ['red', 'green', 'orange', 'purple'] # PID가 많아질 경우 대비
+    truth_colors = ['blue', 'cyan', 'magenta', 'navy']
 
-    for i, z_s in enumerate(STRIP_Z_LIST):
+    for i in range(10):
         ax = axes[i]
+        if i >= len(STRIP_Z_LIST):
+            ax.axis('off')
+            continue
+            
+        z_s = STRIP_Z_LIST[i]
         ax.set_xlim(-6, 6); ax.set_ylim(-6, 6)
         
         # 1. RANSAC Pool
@@ -148,28 +155,35 @@ def plot_debug_event(evt_id, ransac_pool, kf_pts_labeled, t_infos, errors):
             pool_layer = np.array(pool_layer)
             ax.scatter(pool_layer[:,1], pool_layer[:,2], color='gray', alpha=0.3, s=30, label='Candidates')
 
-        # 2. MC Truth (모든 Truth 그리기)
+        # 2. MC Truth
         for t_idx, t_info in enumerate(t_infos):
             tx = t_info['x'] + (t_info['px']/t_info['pz']) * z_s
             ty = t_info['y'] + (t_info['py']/t_info['pz']) * z_s
-            ax.scatter(tx, ty, color=truth_colors[t_idx % 2], facecolors='none', 
-                       edgecolors=truth_colors[t_idx % 2], s=150, 
+            ax.scatter(tx, ty, color=truth_colors[t_idx % len(truth_colors)], facecolors='none', 
+                       edgecolors=truth_colors[t_idx % len(truth_colors)], s=150, 
                        label=f'Truth {t_idx}' if i==0 else "")
 
-        # 3. Reco Hits (PID에 따라 색상 구분)
+        # 3. Reco Hits
         layer_reco = kf_pts_labeled[np.abs(kf_pts_labeled[:,0] - z_s) < 0.01]
         for row in layer_reco:
             pid = int(row[3])
-            ax.scatter(row[1], row[2], color=reco_colors[pid % 2], marker='x', 
+            ax.scatter(row[1], row[2], color=reco_colors[pid % len(reco_colors)], marker='x', 
                        s=100, linewidths=2, label=f'Reco {pid}' if i==0 else "")
 
-        ax.set_title(f"Layer {i+1}"); ax.grid(True, linestyle=':', alpha=0.5)
-        if i == 0: ax.legend(loc='upper right', fontsize='x-small')
+        ax.set_title(f"L{i+1} (z={z_s:.1f})", fontsize=10)
+        ax.grid(True, linestyle=':', alpha=0.5)
+        if i == 0: ax.legend(loc='upper right', fontsize='xx-small')
 
-    err_str = "\n".join([f"Trk{k}: Dist={e[0]:.3f}, Ang={e[1]:.3f}, Mass={e[2]:.3f}" for k, e in errors.items()])
-    plt.suptitle(f"Double Photon Debug [{evt_id}]\n{err_str}", fontsize=14)
+    # --- 수정된 하단 에러 문자열 출력 세션 ---
+    err_str = "\n".join([
+        # e[3]을 지우고, e[2] 자리에 있던 inv_mass를 명시적으로 매칭
+        f"Trk{k}: Dist={e[0]:.3f}, Ang={e[1]:.3f} | InvMass={e[2]:.3f}" 
+        for k, e in errors.items()
+    ])
+    
+    plt.suptitle(f"Double Photon Debug [{evt_id}] - 10 Layers\n{err_str}", fontsize=12)
     plt.tight_layout()
-    plt.savefig(f"{OUTPUT_DIR}/Debug_{evt_id}.png")
+    plt.savefig(f"{OUTPUT_DIR}/Debug_{evt_id}_10layers.png")
     plt.close()
 
 import dimod
@@ -186,140 +200,322 @@ except Exception as e:
     print(f"Sampler Init Error: {e}")
     _SAMPLER = None
 
-
 def solve_layer_zoom_qubo_log(layers_candidates):
-    Q = {}
     n_layers = len(layers_candidates)
-    
-    # 1. 각 레이어의 노드 시작 인덱스(offset) 계산 (동적 ID 생성)
-    node_offsets = [0]
-    for i in range(n_layers):
-        node_offsets.append(node_offsets[-1] + len(layers_candidates[i]))
-    
-    def get_id(l, s): 
-        return node_offsets[l] + s
+    if n_layers < 3:
+        return []
 
-    # 하이퍼파라미터
-    w_score = 0.0    # 데이터가 있는 곳을 선택하려는 힘 (매우 강하게)
-    w_dist = 0.0       # 인접 레이어 간 연결성
-    w_bend = 10.0      # 직선성 (앞 두 레이어가 세 번째를 결정하도록)
-    penalty = 1000.0   # 레이어당 하나 선택 제약 (매우 강하게)
+    print("\n" + "=" * 60)
+    print("🔍 STRICT 2-SEGMENT CHAIN QUBO (EDGE VERSION)")
+    print("=" * 60)
 
-    def get_layer_importance(l):
-        # 레이어 순서에 따른 가중치 (앞쪽 레이어 중시)
-        return 1.0 ** (1 - l)
+    # =========================
+    # EDGE VARIABLES
+    # x[l, i, j] = layer l i -> layer l+1 j
+    # =========================
+    edge_to_var = {}
+    var_to_edge = {}
 
-    # 1. Unary Terms: 각 노드의 개별 점수 (Score)
-    for l in range(n_layers):
-        l_imp = get_layer_importance(l)
-        for s in range(len(layers_candidates[l])):
-            idx = get_id(l, s)
-            score = layers_candidates[l][s]['score']
-            # 높은 score를 선택하도록 -log(score) 최소화
-            Q[(idx, idx)] = -np.log(score * w_score * l_imp + 1e-6)
-
-    # 2. Binary Terms: 연결 거리 및 3점 직선성
+    vid = 0
     for l in range(n_layers - 1):
-        l_imp_trans = get_layer_importance(l)
-        n_sub1 = len(layers_candidates[l])
-        n_sub2 = len(layers_candidates[l+1])
-        
-        for s1 in range(n_sub1):
-            for s2 in range(n_sub2):
-                idx_a, idx_b = get_id(l, s1), get_id(l+1, s2)
-                p1 = np.array(layers_candidates[l][s1]['center'])
-                p2 = np.array(layers_candidates[l+1][s2]['center'])
-                
-                # 두 점 사이의 거리 비용
-                dist_sq = np.sum((p2 - p1)**2)
-                log_trans = np.log(100*dist_sq * l_imp_trans + 1.0) * w_dist
-                Q[(idx_a, idx_b)] = Q.get((idx_a, idx_b), 0) + log_trans
+        for i in range(len(layers_candidates[l])):
+            for j in range(len(layers_candidates[l + 1])):
 
-                # 3점 직선성 (Bend Error) - 최소 3개 레이어가 있을 때만 작동
-                if l < n_layers - 2:
-                    l_imp_bend = get_layer_importance(l) * 10.0
-                    n_sub3 = len(layers_candidates[l+2])
-                    for s3 in range(n_sub3):
-                        idx_c = get_id(l+2, s3)
-                        p3 = np.array(layers_candidates[l+2][s3]['center'])
-                        
-                        # 2*p2 - p1 - p3 가 0에 가까울수록 직선
-                        bend_error_sq = np.sum((2 * p2 - p1 - p3)**2)
-                        #cost_bend = np.log(bend_error_sq * l_imp_bend + 1.0) * w_bend
-                        cost_bend = bend_error_sq * l_imp_bend * w_bend
-                        
-                        # 삼항 관계를 이항 결합으로 분해 투영
-                        Q[(idx_a, idx_b)] = Q.get((idx_a, idx_b), 0) + cost_bend
-                        Q[(idx_b, idx_c)] = Q.get((idx_b, idx_c), 0) + cost_bend
-                        Q[(idx_a, idx_c)] = Q.get((idx_a, idx_c), 0) + cost_bend
+                edge_to_var[(l, i, j)] = vid
+                var_to_edge[vid] = (l, i, j)
+                vid += 1
 
-    # 3. Constraint: 레이어당 무조건 '하나'만 선택 (One-Hot Constraint)
-    for l in range(n_layers):
-        n_sub = len(layers_candidates[l])
-        for s1 in range(n_sub):
-            for s2 in range(s1 + 1, n_sub):
-                idx1, idx2 = get_id(l, s1), get_id(l, s2)
-                Q[(idx1, idx2)] = Q.get((idx1, idx2), 0) + penalty
+    print(f"\n🧩 Total EDGE Variables: {vid}")
 
-    # 샘플링 실행
-    try:
-        sampleset = _SAMPLER.sample_qubo(Q, num_reads=100)
-        sample = sampleset.first.sample
-    except Exception as e:
-        print(f"QUBO Sampling Failed: {e}")
-        return [layer[0] for layer in layers_candidates if len(layer) > 0]
+    Q = {}
 
-    # 결과 추출
-    final_path = []
-    for l in range(n_layers):
-        selected = [s for s in range(len(layers_candidates[l])) if sample.get(get_id(l, s), 0) == 1]
-        if selected:
-            idx = selected[0]
+    def add_q(a, b, w):
+        key = tuple(sorted((a, b)))
+        Q[key] = Q.get(key, 0.0) + float(w)
+
+    # =========================================================
+    # EXACTLY-ONE
+    # =========================================================
+
+    A = 1000.0
+
+    for l in range(n_layers - 1):
+
+        edges = [
+            edge_to_var[(l, i, j)]
+            for i in range(len(layers_candidates[l]))
+            for j in range(len(layers_candidates[l + 1]))
+        ]
+
+        for e in edges:
+            add_q(e, e, -1.0 * A)
+
+        for i in range(len(edges)):
+            for j in range(i + 1, len(edges)):
+                add_q(edges[i], edges[j], 2.0 * A)
+
+    # =========================================================
+    # 2. STRICT CHAIN CONSISTENCY (FIXED)
+    # =========================================================
+    B = 500.0
+
+    for j in range(len(layers_candidates[1])):
+
+        incoming = [
+            edge_to_var[(0, i, j)]
+            for i in range(len(layers_candidates[0]))
+        ]
+
+        outgoing = [
+            edge_to_var[(1, j, k)]
+            for k in range(len(layers_candidates[2]))
+        ]
+
+        for a in incoming:
+            for b in outgoing:
+                add_q(a, b, -B)
+    # =========================================================
+    # 3. STRAIGHTNESS CONSTRAINT (FIXED FOR NODE STRUCTURE)
+    # =========================================================
+    C = 10.0
+
+    for l in range(n_layers - 2):
+
+        for i in range(len(layers_candidates[l])):
+            for j in range(len(layers_candidates[l + 1])):
+                for k in range(len(layers_candidates[l + 2])):
+
+                    e1 = edge_to_var[(l, i, j)]
+                    e2 = edge_to_var[(l + 1, j, k)]
+
+                    x1, y1 = layers_candidates[l][i]['center']
+                    x2, y2 = layers_candidates[l + 1][j]['center']
+                    x3, y3 = layers_candidates[l + 2][k]['center']
+
+                    dx1 = x2 - x1
+                    dy1 = y2 - y1
+
+                    dx2 = x3 - x2
+                    dy2 = y3 - y2
+
+                    bend = (dx1 - dx2)**2 + (dy1 - dy2)**2
+
+                    add_q(e1, e2, C * bend)
+   # =========================================================
+    # DEBUG (LOWEST ENERGY BINARY TERMS + COORDS)
+    # =========================================================
+
+    binary = [(v, i, j) for (i, j), v in Q.items() if i != j]
+
+    binary.sort(key=lambda x: x[0])  # lowest first
+
+    print("\n" + "=" * 60)
+    print("🔮 QUBO DEBUG (WITH COORDINATES)")
+    print(f"Q Terms     : {len(Q)}")
+    print(f"Edge Vars   : {vid}")
+    print("=" * 60)
+
+    print("\n📌 TOP 5 LOWEST BINARY TERMS")
+    print("=" * 60)
+
+    for w, i, j in binary[:5]:
+
+        print(f"\nweight = {w:.3f}")
+
+        # decode edges
+        if i in var_to_edge and j in var_to_edge:
+
+            l1, a, b = var_to_edge[i]
+            l2, c, d = var_to_edge[j]
+
+            p1 = layers_candidates[l1][a]['center']
+            p2 = layers_candidates[l1 + 1][b]['center']
+
+            p3 = layers_candidates[l2][c]['center']
+            p4 = layers_candidates[l2 + 1][d]['center']
+
+            print(f"edge1  = L{l1}: {a}->{b}  {p1} -> {p2}")
+            print(f"edge2  = L{l2}: {c}->{d}  {p3} -> {p4}")
+
         else:
-            # 선택된 노드가 없으면 가장 높은 score 노드로 대체
-            idx = np.argmax([c['score'] for c in layers_candidates[l]]) if len(layers_candidates[l]) > 0 else 0
-        
-        if len(layers_candidates[l]) > 0:
-            final_path.append(layers_candidates[l][idx])
-            
-    return final_path
+            print(f"vars   = ({i}, {j})")
+
+        print("-" * 40)
+
+    print("=" * 60)
+
+    # =========================================================
+    # SAMPLING
+    # =========================================================
+    sampleset = _SAMPLER.sample_qubo(
+        Q,
+        annealing_time=50,
+        num_reads=100
+    )
+
+    # =========================================================
+    # MINIMAL POST-SOLVE ANALYSIS + PATH
+    # =========================================================
+
+    best = sampleset.first
+    sample = best.sample
+    energy = best.energy
+
+    print("\n" + "=" * 60)
+    print("🧠 BEST SOLUTION SUMMARY")
+    print("=" * 60)
+
+    print(f"Best energy = {energy:.3f}")
+
+    active = [v for v, val in sample.items() if val == 1]
+
+    print(f"Active vars = {len(active)}")
+
+    # =========================================================
+    # PER-LAYER SUMMARY (NO FULL DUMP)
+    # =========================================================
+
+    path = [None] * n_layers
+
+    for l in range(n_layers - 1):
+
+        edges = [
+            edge_to_var[(l, i, j)]
+            for i in range(len(layers_candidates[l]))
+            for j in range(len(layers_candidates[l + 1]))
+        ]
+
+        active_edges = [e for e in edges if sample.get(e, 0) == 1]
+
+        print(f"\nLayer {l}->{l+1} | active={len(active_edges)}")
+
+        for e in active_edges:
+
+            ll, i, j = var_to_edge[e]
+
+            p1 = layers_candidates[ll][i]
+            p2 = layers_candidates[ll + 1][j]
+
+            x1, y1 = p1['center']
+            x2, y2 = p2['center']
+
+            print(f"  {i}->{j}  ({x1:.2f},{y1:.2f}) -> ({x2:.2f},{y2:.2f})")
+
+        # path reconstruction seed
+        if l == 0 and len(active_edges) > 0:
+            _, i0, j0 = var_to_edge[active_edges[0]]
+            path[0] = layers_candidates[0][i0]
+            path[1] = layers_candidates[1][j0]
+
+        if l == 1 and len(active_edges) > 0:
+            _, _, j1 = var_to_edge[active_edges[0]]
+            path[2] = layers_candidates[2][j1]
+
+    # =========================================================
+    # TOP ENERGY TERMS (WHY THIS WON)
+    # =========================================================
+
+    print("\n" + "=" * 60)
+    print("⚖️ TOP ENERGY CONTRIBUTIONS")
+    print("=" * 60)
+
+    top_terms = []
+
+    for (i, j), w in Q.items():
+
+        xi = sample.get(i, 0)
+        xj = sample.get(j, 0)
+
+        if xi and xj:
+
+            contrib = w * xi * xj
+
+            top_terms.append((abs(contrib), i, j, w, contrib))
+
+    top_terms.sort(reverse=True)
+
+    for _, i, j, w, c in top_terms[:10]:
+
+        print(f"({i},{j}) w={w:.1f} contrib={c:.1f}")
+    
+    # FINAL PATH
+    # =========================================================
+
+    print("\n" + "=" * 60)
+    print("📌 FINAL PATH")
+    print("=" * 60)
+
+    for l, p in enumerate(path):
+
+        if p is None:
+            print(f"L{l}: NONE")
+            continue
+
+        x, y = p['center']
+        print(f"L{l}: ({x:.3f},{y:.3f})")
+
+    return path
 
 def run_single_photon_tracking(cluster_pts, csi_pool, pid, file_label, iterations=10):
     csi_pool = np.asanyarray(csi_pool)
     cluster_pts = np.asanyarray(cluster_pts)
     
     unique_zs = np.sort(np.unique(cluster_pts[:, 0]))
-    
-    # [수정] 데이터가 존재하는 레이어 중 앞에서부터 '최대 3개'만 사용
-    target_zs = unique_zs[:3] 
+    # 앞 최대 5개만 사용
+    n_pick = min(5, len(unique_zs))
+
+    # 그 안에서 랜덤 인덱스 3개 선택
+    rand_idx = sorted(random.sample(range(n_pick), min(3, n_pick)))
+
+    # 선택된 인덱스로 target_zs 구성
+    target_zs = [unique_zs[i] for i in rand_idx]
     if len(target_zs) == 0: return None
 
-    # --- 초기 관심 영역(ROI) 설정 ---
+    # --- 초기 관심 영역(ROI) 설정 (모든 힛을 포함하는 기하학적 중심으로 수정) ---
     current_rois = []
     for z in target_zs:
         layer_hits = cluster_pts[cluster_pts[:, 0] == z]
-        is_stereo = z in [4.3, 8.3]
+        is_stereo = z in [3.3, 7.3]
         
         if len(layer_hits) > 0:
             if is_stereo:
                 # 45도 회전된 좌표계에서 범위를 계산
                 rot_x, rot_y = to_stereo(layer_hits[:, 1], layer_hits[:, 2])
-                width_x = np.max(rot_x) - np.min(rot_x)
-                width_y = np.max(rot_y) - np.min(rot_y)
-                l_cx_rot, l_cy_rot = np.mean(rot_x), np.mean(rot_y)
                 
+                # 모든 점을 포함하는 회전 좌표계 기준의 경계 계산
+                min_rx, max_rx = np.min(rot_x), np.max(rot_x)
+                min_ry, max_ry = np.min(rot_y), np.max(rot_y)
+                
+                width_x = max_rx - min_rx
+                width_y = max_ry - min_ry
+                
+                # [수정] 평균(mean) 대신, 모든 점을 완벽히 감싸는 기하학적 중심(Center of Bounding Box) 계산
+                l_cx_rot = (min_rx + max_rx) / 2.0
+                l_cy_rot = (min_ry + max_ry) / 2.0
+                
+                # 원래 좌표계로 역회전 변환
                 l_cx = (l_cx_rot + l_cy_rot) / (2 * 0.70710678)
                 l_cy = (l_cy_rot - l_cx_rot) / (2 * 0.70710678)
             else:
-                width_x = np.max(layer_hits[:, 1]) - np.min(layer_hits[:, 1])
-                width_y = np.max(layer_hits[:, 2]) - np.min(layer_hits[:, 2])
-                l_cx, l_cy = np.mean(layer_hits[:, 1]), np.mean(layer_hits[:, 2])
+                # 일반 좌표계 기준 경계 계산
+                min_x, max_x = np.min(layer_hits[:, 1]), np.max(layer_hits[:, 1])
+                min_y, max_y = np.min(layer_hits[:, 2]), np.max(layer_hits[:, 2])
+                
+                width_x = max_x - min_x
+                width_y = max_y - min_y
+                
+                # [수정] 모든 점을 완벽히 감싸는 기하학적 중심 계산
+                l_cx = (min_x + max_x) / 2.0
+                l_cy = (min_y + max_y) / 2.0
             
-            raw_range = max(width_x, width_y)
-            dynamic_size = raw_range * 1.0 + 0.0 * len(layer_hits)
+            raw_range = max(width_x, width_y)/2
+            # 초기 사이즈를 꽉 채우는 범위(raw_range)에 마진을 살짝 더해주면(예: * 1.1) 더욱 안전합니다.
+            dynamic_size = raw_range / 0.75 + 0.0 * len(layer_hits)
         else:
             dynamic_size = 2.0
-            l_cx, l_cy = np.mean(cluster_pts[:, 1]), np.mean(cluster_pts[:, 2])
+            # 레이어에 힛이 아예 없는 경우 전체 점의 기하학적 영역 중심을 대입
+            l_cx = (np.min(cluster_pts[:, 1]) + np.max(cluster_pts[:, 1])) / 2.0
+            l_cy = (np.min(cluster_pts[:, 2]) + np.max(cluster_pts[:, 2])) / 2.0
 
         current_rois.append({'center': (l_cx, l_cy), 'size': dynamic_size})
 
@@ -333,91 +529,171 @@ def run_single_photon_tracking(cluster_pts, csi_pool, pid, file_label, iteration
             roi = current_rois[i]
             rcx, rcy = roi['center']
             s = roi['size']
-            is_stereo = z in [4.3, 8.3]
+            is_stereo = z in [3.3, 7.3]
             
             layer_hits_all = csi_pool[csi_pool[:, 0] == z]
             layer_cluster_hits = cluster_pts[cluster_pts[:, 0] == z]
             next_s = s * 0.75 if it < iterations - 1 else s
             
-            # 1. 마스크 필터링 (Stereo 여부에 따라 축 변경)
-            if is_stereo:
-                curr_rot_x, curr_rot_y = to_stereo(layer_cluster_hits[:, 1], layer_cluster_hits[:, 2])
-                rcx_rot, rcy_rot = to_stereo(rcx, rcy)
-                in_roi_mask = (np.abs(curr_rot_x - rcx_rot) < s/2) & (np.abs(curr_rot_y - rcy_rot) < s/2)
-            else:
-                in_roi_mask = (np.abs(layer_cluster_hits[:, 1] - rcx) < s/2) & (np.abs(layer_cluster_hits[:, 2] - rcy) < s/2)
+            # =================================================================
+            # ✨ [완전 단순화] 데이터 기반 랜덤 무게중심 수렴 (Mean-Shift)
+            # =================================================================
+            # 1. 원래 할당받은 중심점(rcx, rcy) 기준으로 주변에 30개 랜덤 흩뿌리기
+            candidate_centers = [(rcx, rcy)]
+            n_random_nodes = 20
+            max_radius = next_s * 1.2
             
-            base_cx, base_cy = rcx, rcy
-            if np.any(in_roi_mask):
-                hits_in_roi = layer_cluster_hits[in_roi_mask]
-                # 줌인 시 잘릴 위험 체크 (회전축 기준)
-                if is_stereo:
-                    h_rot_x, h_rot_y = to_stereo(hits_in_roi[:, 1], hits_in_roi[:, 2])
-                    out_of_next_zoom = (np.abs(h_rot_x - rcx_rot) > next_s/2) | (np.abs(h_rot_y - rcy_rot) > next_s/2)
-                else:
-                    out_of_next_zoom = (np.abs(hits_in_roi[:, 1] - rcx) > next_s/2) | (np.abs(hits_in_roi[:, 2] - rcy) > next_s/2)
+            for _ in range(n_random_nodes):
+                theta = np.random.uniform(0, 2 * np.pi)
+                r = max_radius * np.sqrt(np.random.uniform(0, 1)) # Uniform Disk Sampling
                 
-                shift_threshold = 0.4 if len(hits_in_roi) < 3 else 0.8
-                if np.mean(out_of_next_zoom) > shift_threshold:
-                    base_cx, base_cy = np.mean(hits_in_roi[:, 1]), np.mean(hits_in_roi[:, 2])
-
-            # 2. 후보지 생성 (원래 좌표계에서 shift 생성)
-            shift = next_s * 0.8
-            if is_stereo:
-                candidate_centers = [(base_cx, base_cy), (base_cx + shift * 0.7071, base_cy + shift * 0.7071), (base_cx - shift * 0.7071, base_cy - shift * 0.7071), (base_cx - shift * 0.7071, base_cy + shift * 0.7071), (base_cx + shift * 0.7071, base_cy - shift * 0.7071)]
-            else:
-                candidate_centers = [(base_cx, base_cy), (base_cx+shift, base_cy), (base_cx-shift, base_cy), (base_cx, base_cy+shift), (base_cx, base_cy-shift)]
+                n_cx = rcx + r * np.cos(theta)
+                n_cy = rcy + r * np.sin(theta)
+                candidate_centers.append((n_cx, n_cy))
             
+            # 2. 흩뿌려진 후보들 내부의 힛트 무게중심으로 좌표 워프 및 최종 노드 확정
             sub_nodes = []
             total_layer_energy = np.sum(layer_hits_all[:, 3]) if len(layer_hits_all) > 0 else 1.0
             n_total_hits = len(layer_cluster_hits)
-
-            for n_cx, n_cy in candidate_centers:
-                # 에너지 및 히트 카운트 마스크 (Stereo 대응)
+            
+            # 중복 위치 방지를 위한 최소 거리 기준 (영역 크기의 10% 수준)
+            duplicate_threshold = next_s * 0.5
+            
+            for c_x, c_y in candidate_centers:
+                # 현재 후보지 영역(next_s) 내에 들어오는 힛트 필터링 (Stereo 여부 반영)
                 if is_stereo:
-                    all_rot_x, all_rot_y = to_stereo(layer_hits_all[:, 1], layer_hits_all[:, 2])
-                    n_rot_cx, n_rot_cy = to_stereo(n_cx, n_cy)
-                    energy_mask = (np.abs(all_rot_x - n_rot_cx) < next_s/2) & (np.abs(all_rot_y - n_rot_cy) < next_s/2)
-                    
                     cls_rot_x, cls_rot_y = to_stereo(layer_cluster_hits[:, 1], layer_cluster_hits[:, 2])
+                    n_rot_cx, n_rot_cy = to_stereo(c_x, c_y)
                     cluster_mask = (np.abs(cls_rot_x - n_rot_cx) < next_s/2) & (np.abs(cls_rot_y - n_rot_cy) < next_s/2)
                 else:
-                    energy_mask = (np.abs(layer_hits_all[:, 1] - n_cx) < next_s/2) & (np.abs(layer_hits_all[:, 2] - n_cy) < next_s/2)
-                    cluster_mask = (np.abs(layer_cluster_hits[:, 1] - n_cx) < next_s/2) & (np.abs(layer_cluster_hits[:, 2] - n_cy) < next_s/2)
+                    cluster_mask = (np.abs(layer_cluster_hits[:, 1] - c_x) < next_s/2) & (np.abs(layer_cluster_hits[:, 2] - c_y) < next_s/2)
+                
+                # [핵심] 영역 내에 힛트가 있다면, 그 힛트들의 평균 위치(무게중심)로 중심점을 강제 워프!
+                if np.any(cluster_mask):
+                    hits_in_area = layer_cluster_hits[cluster_mask]
+                    final_cx = np.mean(hits_in_area[:, 1])
+                    final_cy = np.mean(hits_in_area[:, 2])
+                else:
+                    # 주변에 힛트가 하나도 안 걸리는 허공 후보지는 패스
+                    continue
+                
+                # 🚨 [스마트 중복 제거] 이미 등록된 sub_nodes 중에 방금 계산한 무게중심과 너무 가까운 녀석이 있는지 검사
+                is_duplicate = False
+                for existing_node in sub_nodes:
+                    ex_cx, ex_cy = existing_node['center']
+                    dist = np.sqrt((final_cx - ex_cx)**2 + (final_cy - ex_cy)**2)
+                    if dist < duplicate_threshold:
+                        is_duplicate = True
+                        break
+                
+                if is_duplicate:
+                    continue # 이미 이 데이터 뭉치에는 깃발이 꽂혔으니 이번 랜덤 점은 무시하고 패스!
+                
+                # 3. 워프된 '고유한' 진짜 데이터 정중앙(final_cx, final_cy) 기준으로 최종 스코어 계산
+                if is_stereo:
+                    all_rot_x, all_rot_y = to_stereo(layer_hits_all[:, 1], layer_hits_all[:, 2])
+                    f_rot_cx, f_rot_cy = to_stereo(final_cx, final_cy)
+                    energy_mask = (np.abs(all_rot_x - f_rot_cx) < next_s/2) & (np.abs(all_rot_y - f_rot_cy) < next_s/2)
+                else:
+                    energy_mask = (np.abs(layer_hits_all[:, 1] - final_cx) < next_s/2) & (np.abs(layer_hits_all[:, 2] - final_cy) < next_s/2)
                 
                 area_energy = np.sum(layer_hits_all[energy_mask, 3]) if np.any(energy_mask) else 0
                 n_hits_in_area = np.sum(cluster_mask)
                 
-                if n_hits_in_area > 0:
-                    score = (area_energy/total_layer_energy + n_hits_in_area/n_total_hits) / np.log1p(n_total_hits) + 0.001
-                    sub_nodes.append({'center': (n_cx, n_cy), 'size': next_s, 'score': score})
-
-            if not sub_nodes: sub_nodes.append({'center': (base_cx, base_cy), 'size': next_s, 'score': 0.0001})
+                score = (area_energy/total_layer_energy + n_hits_in_area/n_total_hits) / np.log1p(n_total_hits) + 0.001
+                sub_nodes.append({'center': (final_cx, final_cy), 'size': next_s, 'score': score})
+            
+            # 만약 난수가 몽땅 허공을 찔러 아무도 못 잡았다면, 최소한의 백업만 유지
+            if not sub_nodes:
+                sub_nodes.append({'center': (rcx, rcy), 'size': next_s, 'score': 0.0001})
+                
             layers_candidates.append(sub_nodes)
 
-            # 3. 시각화 (Stereo는 빨간색 45도 회전 사각형)
+        all_combinations = []
+        
+        # 3개 레이어의 모든 노드 조합을 완전 탐색 (후보가 레이어당 30개 내외라 순식간에 계산 가능)
+        if len(layers_candidates) == len(target_zs):
+            import itertools
+            # 각 레이어의 노드 인덱스 조합 생성
+            node_indices = [range(len(nodes)) for nodes in layers_candidates]
+            
+            for idx_triple in itertools.product(*node_indices):
+                pts = []
+                for l_idx, n_idx in enumerate(idx_triple):
+                    cx, cy = layers_candidates[l_idx][n_idx]['center']
+                    cz = target_zs[l_idx]
+                    pts.append([cx, cy, cz])
+                pts = np.array(pts) # Shape: (3, 3) -> 각 행은 [x, y, z]
+                
+                # 3차원 공간에서 3개 점의 직선성 오차 계산 (간단한 3D 피팅 잔차 사용)
+                # Z축 기준 X, Y 각각 선형 회귀 후 오차 제곱합 계산
+                A = np.vstack([pts[:, 2], np.ones(len(pts))]).T
+                # X 오차
+                m_x, c_x = np.linalg.lstsq(A, pts[:, 0], rcond=None)[0]
+                res_x = np.sum((pts[:, 0] - (m_x * pts[:, 2] + c_x)) ** 2)
+                # Y 오차
+                m_y, c_y = np.linalg.lstsq(A, pts[:, 1], rcond=None)[0]
+                res_y = np.sum((pts[:, 1] - (m_y * pts[:, 2] + c_y)) ** 2)
+                
+                total_residual = res_x + res_y
+                all_combinations.append({
+                    'indices': idx_triple,
+                    'residual': total_residual,
+                    'points': pts[:, :2] # 시각화에 쓸 (x, y) 좌표들만 저장
+                })
+                
+            # 직선성 오차(residual)가 작은 순서대로 정렬 (가장 완벽한 직선이 1등)
+            all_combinations = sorted(all_combinations, key=lambda x: x['residual'])
+
+        # 3. 시각화 및 상위 순위쌍 표시
+        top_colors = ['gold', 'limegreen', 'darkorange']  # 1등(금), 2등(초록), 3등(주황)
+        top_markers = ['o', '*', '^']                     # 마커 모양 차별화
+        
+        for i, z in enumerate(target_zs):
             ax = axes[i]
+            layer_cluster_hits = cluster_pts[cluster_pts[:, 0] == z]
+            sub_nodes = layers_candidates[i]
+            is_stereo = z in [3.3, 7.3]
+            
+            # 🚨 [수정] 이 레이어(i) 이터레이션의 진짜 기준점(중심)을 다시 정확하게 매칭합니다.
+            roi = current_rois[i]
+            layer_rcx, layer_rcy = roi['center']
+            
+            # 기본 힛트 및 후보 그물망 사각형 그리기 (기존 로직 유지)
             ax.scatter(layer_cluster_hits[:, 1], layer_cluster_hits[:, 2], color='blue', alpha=0.3)
             for node in sub_nodes:
                 if is_stereo:
                     rect = plt.Rectangle((node['center'][0] - node['size']/2, node['center'][1] - node['size']/2), 
-                                        node['size'], node['size'], fill=False, color='red', alpha=0.5)
+                                        node['size'], node['size'], fill=False, color='red', alpha=0.3)
                     trans = mtransforms.Affine2D().rotate_around(node['center'][0], node['center'][1], np.deg2rad(45)) + ax.transData
                     rect.set_transform(trans)
                     ax.add_patch(rect)
                 else:
                     ax.add_patch(plt.Rectangle((node['center'][0]-node['size']/2, node['center'][1]-node['size']/2), 
-                                                node['size'], node['size'], fill=False, color='gray', alpha=0.5))
-            ax.scatter(rcx, rcy, marker='x', color='black', s=50)
+                                                node['size'], node['size'], fill=False, color='gray', alpha=0.3))
+            
+            # 🚨 [수정] 위에서 가져온 레이어 고유의 기준점(layer_rcx, layer_rcy)으로 x 표시를 찍습니다.
+            ax.scatter(layer_rcx, layer_rcy, marker='x', color='black', s=60, zorder=20, linewidths=1.5)
+            
+            # 🌟 여기에 해당 레이어에 속한 Top 3 순위쌍의 노드 중심점을 오버레이해서 그리기
+            for rank in range(min(3, len(all_combinations))):
+                best_combo = all_combinations[rank]
+                # 이번 레이어(i)에 해당하는 점의 (x, y) 추출
+                best_x, best_y = best_combo['points'][i]
+                
+                ax.scatter(best_x, best_y, marker=top_markers[rank], color=top_colors[rank], 
+                        s=180, zorder=15, edgecolors='black', linewidths=2,
+                        label=f'Rank {rank+1} Line' if i == 0 else "") # 범례는 첫 창에만
+                
             ax.set_xlim(-6, 6); ax.set_ylim(-6, 6)
-            ax.grid(True, linestyle='--', alpha=0.6)  # 점선 그리드
+            ax.grid(True, linestyle='--', alpha=0.6)
             ax.set_axisbelow(True)
+            if i == 0 and len(all_combinations) > 0:
+                ax.legend(loc='upper left', fontsize='small')
 
         plt.tight_layout()
         debug_dir = os.path.join(OUTPUT_DIR, "debug")
-        # 2. [핵심] 폴더가 없으면 생성 (exist_ok=True는 이미 폴더가 있어도 에러를 내지 않음)
         os.makedirs(debug_dir, exist_ok=True)
-        # 3. 저장 실행
         save_path = os.path.join(debug_dir, f"{file_label}_PID{int(pid)}_it{it:02d}.png")
         plt.savefig(save_path)
         plt.close(fig)
@@ -444,10 +720,10 @@ def apply_two_photon_split_reco(ransac_pool, csi_pool, file_label):
     
     # --- [STEP 1] 2D 정사영 및 클러스터링 ---
     # 모든 레이어의 힛을 XY 평면에 투영하여 두 그룹으로 나눕니다.
-    xy_coords = pts[:, 1:3]
-    # n_clusters=2: 두 개의 포톤 궤적을 찾음
-    kmeans = KMeans(n_clusters=2, n_init=10, random_state=42).fit(xy_coords)
-    labels = kmeans.labels_
+    #xy_coords = pts[:, 1:3]
+    #kmeans = KMeans(n_clusters=2, n_init=10, random_state=42).fit(xy_coords)
+    #labels = kmeans.labels_
+    labels = np.zeros(len(pts))
     # n_components는 클러스터 개수(K)와 같습니다.
     #gmm = GaussianMixture(n_components=2, random_state=42).fit(xy_coords)
     #labels = gmm.predict(xy_coords)
@@ -456,9 +732,9 @@ def apply_two_photon_split_reco(ransac_pool, csi_pool, file_label):
     all_slopes = []
 
     # --- [STEP 2] 각 클러스터(포톤)에 대해 독립적으로 Reco 실행 ---
-    for pid in range(2):
+    for pid in range(10):
         # 해당 클러스터에 할당된 힛들만 필터링
-        cluster_hits = pts[labels == pid]
+        cluster_hits = pts
         
         # 유효한 레이어 수가 최소 3개는 되어야 추적 가능
         unique_zs = np.sort(np.unique(cluster_hits[:, 0]))
@@ -540,7 +816,7 @@ def process_single_file(f_path):
             event_df = raw_df[np.abs(raw_df['PDGID']) == 11][['x', 'y', 'z', 'PPIPZ']].copy()
             
             # --- [Part 1: CsI Energy Deposit Processing (1cm^3 Cube)] ---
-            CSI_Z_BOUNDS = [(3, 4), (5, 6), (7, 8), (9, 10), (11, 12)] # CsI 층의 z 범위 (예시)
+            CSI_Z_BOUNDS = [(0, 1), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11), (12, 13), (14, 15), (16, 17), (18, 19)] # CsI 층의 z 범위 (예시)
             csi_pool = []
 
             for z_min, z_max in CSI_Z_BOUNDS:
@@ -658,105 +934,181 @@ def process_single_file(f_path):
             results = apply_two_photon_split_reco(ransac_pool, csi_pool, f_path.split('/')[-1])
 
             if results is not None:
-                kf_pts_labeled, slopes = results  # kf_pts_labeled: [z, x, y, pid], slopes: [(sx0, sy0), (sx1, sy1)]
+
+                kf_pts_labeled, slopes = results
                 track_errors = {}
                 matches = []
 
-                # 1. 1:1 매칭 (Cost Matrix 기반 최단 거리 매칭)
-                match_candidates = []
-                true_sz = STRIP_Z_LIST[0]
-                
-                # 모든 Reco(r_idx)와 모든 Truth(t_idx) 조합의 거리 계산
-                # kf_pts_labeled에서 각 pid별로 첫 번째 레이어(z_min)의 점을 찾아 거리를 잽니다.
-                for r_idx in range(len(slopes)):
-                    reco_pts = kf_pts_labeled[kf_pts_labeled[:, 3] == r_idx]
-                    if len(reco_pts) == 0: continue
-                    
-                    # 첫 번째 레이어의 점 (z가 가장 작은 점)
-                    r_start = reco_pts[np.argmin(reco_pts[:, 0])][1:3] # (x, y)
-                    
-                    for t_idx, t_info in enumerate(t_infos):
-                        tx = t_info['x'] + (t_info['px']/t_info['pz']) * true_sz
-                        ty = t_info['y'] + (t_info['py']/t_info['pz']) * true_sz
-                        d = np.sqrt((r_start[0]-tx)**2 + (r_start[1]-ty)**2)
-                        match_candidates.append({'r_idx': r_idx, 't_idx': t_idx, 'dist': d})
+                # =========================================================
+                # 1. SMART TRACK MATCHING (FULL TRACK RESIDUAL)
+                # =========================================================
 
-                # 거리가 짧은 순으로 정렬하여 1:1 할당
-                match_candidates.sort(key=lambda x: x['dist'])
-                assigned_reco, assigned_truth = set(), set()
-                
+                match_candidates = []
+
+                for r_idx in range(len(slopes)):
+
+                    reco_pts = kf_pts_labeled[kf_pts_labeled[:, 3] == r_idx]
+
+                    if len(reco_pts) == 0:
+                        continue
+
+                    for t_idx, t_info in enumerate(t_infos):
+
+                        total_cost = 0.0
+
+                        for pt in reco_pts:
+
+                            pz, px, py = pt[0], pt[1], pt[2]
+
+                            tx = t_info['x'] + (t_info['px'] / t_info['pz']) * pz
+                            ty = t_info['y'] + (t_info['py'] / t_info['pz']) * pz
+
+                            total_cost += (px - tx)**2 + (py - ty)**2
+
+                        match_candidates.append({
+                            'r_idx': r_idx,
+                            't_idx': t_idx,
+                            'cost': total_cost
+                        })
+
+                # =========================================================
+                # GREEDY 1:1 MATCH
+                # =========================================================
+
+                match_candidates.sort(key=lambda x: x['cost'])
+
+                assigned_reco = set()
+                assigned_truth = set()
+
                 for cand in match_candidates:
+
                     if cand['r_idx'] not in assigned_reco and cand['t_idx'] not in assigned_truth:
+
                         matches.append((cand['r_idx'], cand['t_idx']))
+
                         assigned_reco.add(cand['r_idx'])
                         assigned_truth.add(cand['t_idx'])
 
-                reco_results = {} # 각 r_idx에 대한 벡터와 에너지 정보를 임시 저장
+                # =========================================================
+                # KEEP ONLY MATCHED RECO TRACKS
+                # =========================================================
+
+                matched_ridx = set(r for r, _ in matches)
+
+                kf_pts_labeled = np.array([
+                    pt for pt in kf_pts_labeled
+                    if int(pt[3]) in matched_ridx
+                ])
+
+                # =========================================================
+                # ERROR / CHI2 / ANGLE
+                # =========================================================
+
+                reco_results = {}
 
                 for r_idx, t_idx in matches:
+
                     reco_pts_subset = kf_pts_labeled[kf_pts_labeled[:, 3] == r_idx]
+
+                    if len(reco_pts_subset) == 0:
+                        continue
+
                     rsx, rsy = slopes[r_idx]
+
                     rz0, rx0, ry0 = reco_pts_subset[0, 0], reco_pts_subset[0, 1], reco_pts_subset[0, 2]
-                    
+
                     best_t = t_infos[t_idx]
-                    
-                    # (A) Z=0 지점 거리
-                    tx_at_z0, ty_at_z0 = best_t['x'], best_t['y']
+
+                    # -----------------------------------------------------
+                    # (A) DISTANCE AT Z=0
+                    # -----------------------------------------------------
+
+                    tx_at_z0 = best_t['x']
+                    ty_at_z0 = best_t['y']
+
                     rx_at_z0 = rx0 + rsx * (0 - rz0)
                     ry_at_z0 = ry0 + rsy * (0 - rz0)
+
                     dist = np.sqrt((rx_at_z0 - tx_at_z0)**2 + (ry_at_z0 - ty_at_z0)**2)
-                    
-                    # (B) 방향 각도 차이
+
+                    # -----------------------------------------------------
+                    # (B) ANGLE DIFFERENCE
+                    # -----------------------------------------------------
+
                     r_vec = np.array([rsx, rsy, 1.0])
                     r_vec /= np.linalg.norm(r_vec)
-                    t_vec = best_t['vec'] 
+
+                    t_vec = best_t['vec']
+
                     angle = np.arccos(np.clip(np.dot(t_vec, r_vec), -1.0, 1.0))
 
-                    # (C) Reduced Chi2
-                    chi2_sum = 0
+                    # -----------------------------------------------------
+                    # (C) REDUCED CHI2
+                    # -----------------------------------------------------
+
+                    chi2_sum = 0.0
+
                     for pt in reco_pts_subset:
+
                         pz, px, py = pt[0], pt[1], pt[2]
-                        exp_x = best_t['x'] + (best_t['px']/best_t['pz']) * (pz)
-                        exp_y = best_t['y'] + (best_t['py']/best_t['pz']) * (pz)
+
+                        exp_x = best_t['x'] + (best_t['px'] / best_t['pz']) * pz
+                        exp_y = best_t['y'] + (best_t['py'] / best_t['pz']) * pz
+
                         chi2_sum += (px - exp_x)**2 + (py - exp_y)**2
-                    
+
                     ndf = len(reco_pts_subset) * 2
+
                     reduced_chi2 = chi2_sum / ndf if ndf > 0 else 999
-                    
-                    # --- [Invariant Mass용 데이터 수집] ---
-                    # Truth의 에너지(E)와 Reco의 방향벡터(r_vec) 저장
+
                     reco_results[r_idx] = {
                         'vec': r_vec,
-                        'energy': best_t['energy'], # Truth에서 가져온 에너지
+                        'energy': best_t['energy'],
                         'dist': dist,
                         'angle': angle,
                         'chi2': reduced_chi2
                     }
 
-                # --- [Invariant Mass 계산 (두 포톤이 매칭되었을 때)] ---
+                # =========================================================
+                # INVARIANT MASS
+                # =========================================================
+
                 inv_mass = -1.0
+
                 if len(reco_results) >= 2:
+
                     keys = list(reco_results.keys())
-                    # 첫 두 매칭된 트랙 사용 (보통 ALP는 2개 포톤)
-                    r1, r2 = reco_results[keys[0]], reco_results[keys[1]]
+
+                    r1 = reco_results[keys[0]]
+                    r2 = reco_results[keys[1]]
+
                     cos_theta = np.clip(np.dot(r1['vec'], r2['vec']), -1.0, 1.0)
+
                     inv_mass = np.sqrt(2 * r1['energy'] * r2['energy'] * (1 - cos_theta))
 
-                # 통계 저장 및 track_errors 업데이트
+                # =========================================================
+                # SAVE STATS
+                # =========================================================
+
                 for r_idx, info in reco_results.items():
-                    # (D) track_errors에 inv_mass 추가 (디버그 플랏 인자용)
+
                     track_errors[r_idx] = (info['dist'], info['angle'], inv_mass)
-                    
+
                     local_stats.append({
-                        'dist_start': info['dist'], 
-                        'angle_diff': info['angle'], 
+                        'dist_start': info['dist'],
+                        'angle_diff': info['angle'],
                         'norm_chi2': info['chi2'],
-                        'inv_mass': inv_mass # 4번째 통계 추가
+                        'inv_mass': inv_mass
                     })
 
-                # 3. 디버그 조건 체크 (inv_mass 정보 포함된 track_errors 전달)
+                # =========================================================
+                # DEBUG PLOT
+                # =========================================================
+
                 if any(d > 0.1 or a > 0.1 for d, a, m in track_errors.values()):
+
                     evt_label = os.path.basename(f_path).split('.')[0]
+
                     plot_debug_event(evt_label, ransac_pool, kf_pts_labeled, t_infos, track_errors)
 
 
@@ -771,31 +1123,30 @@ def process_single_file(f_path):
 import pickle
 
 def main():
-    file_list = glob.glob("/gv0/Users/mioh/DAMSA_FULL/ms/ALPGun/ALP100DoublePhotonOrigin/DAMSA_m100_r*.root")
+    file_list = glob.glob("/gv0/Users/mioh/DAMSA_FULL/ms/ALPGun/ALP100DoublePhoton_0_05rad_10Layers/DAMSA_m100_r1*.root")
     
     # [추가] 결과 저장용 파일 경로
     PICKLE_PATH = f"{OUTPUT_DIR}/analysis_results.pkl"
     
     # 만약 이미 파일이 있다면 로드할지 결정 (선택 사항)
-    # if os.path.exists(PICKLE_PATH):
-    #     with open(PICKLE_PATH, 'rb') as f:
-    #         results = pickle.load(f)
-    #     print(f">>> 기존 피클 파일을 로드했습니다: {PICKLE_PATH}")
-    # else:
-    
-    results = []
-    for f in file_list:
-        print(f">>> 파일 처리 중: {f}")
-        res = process_single_file(f) 
-        results.append(res)
-        plt.close('all') 
-        gc.collect()
+    if os.path.exists(PICKLE_PATH):
+         with open(PICKLE_PATH, 'rb') as f:
+             results = pickle.load(f)
+         print(f">>> 기존 피클 파일을 로드했습니다: {PICKLE_PATH}")
+    else:
+        results = []
+        for f in file_list:
+            print(f">>> 파일 처리 중: {f}")
+            res = process_single_file(f) 
+            results.append(res)
+            plt.close('all') 
+            gc.collect()
 
-    # --- [핵심: 피클 저장] ---
-    # results에는 (total_processed, total_passed, combined_stats) 튜플들이 들어있음
-    with open(PICKLE_PATH, 'wb') as f:
-        pickle.dump(results, f)
-    print(f"\n✅ 모든 결과가 피클로 저장되었습니다: {PICKLE_PATH}")
+        # --- [핵심: 피클 저장] ---
+        # results에는 (total_processed, total_passed, combined_stats) 튜플들이 들어있음
+        with open(PICKLE_PATH, 'wb') as f:
+            pickle.dump(results, f)
+        print(f"\n✅ 모든 결과가 피클로 저장되었습니다: {PICKLE_PATH}")
 
     # [Step 3] 통계 취합 및 플로팅
     total_processed = sum(r[0] for r in results if r)
@@ -816,24 +1167,81 @@ def main():
         # 1x4 플랏으로 변경 (Inv Mass 추가)
         fig, axes = plt.subplots(1, 4, figsize=(24, 5))
         
-        # 1. Vertex Resolution
-        axes[0].hist(s_df['dist_start'], bins=50, color='salmon', edgecolor='black')
-        axes[0].set_title("Vertex Resolution (cm)"); axes[0].set_xlabel("$\Delta R$")
-        
-        # 2. Angular Resolution
-        axes[1].hist(s_df['angle_diff'], bins=50, color='skyblue', edgecolor='black')
-        axes[1].set_title("Angular Resolution (rad)"); axes[1].set_xlabel("$\Delta \Theta$")
-        
-        # 3. Norm Chi2
-        axes[2].hist(s_df['norm_chi2'], bins=50, color='limegreen', edgecolor='black')
-        axes[2].set_title("$\chi^2 / ndf$"); axes[2].set_xlabel("Value"); axes[2].set_yscale('log')
+        def get_overflow_adjusted_data(data, lower_p=0, upper_p=90):
+            """
+            데이터의 상위 경계값을 넘는 Overflow 데이터를 
+            마지막 Bin의 위치로 뭉쳐주는 헬퍼 함수
+            """
+            if data.empty:
+                return data, 0.0, 1.0
+            
+            # 0% ~ 90% 경계값 계산
+            v_min, v_max = np.percentile(data, [lower_p, upper_p])
+            
+            # 물리량 특성상 하한선이 0 미만으로 내려가지 않도록 잠금 (Invariant Mass 제외 유연하게 적용 가능)
+            if v_min < 0 and data.min() >= 0:
+                v_min = 0.0
+                
+            # 안전장치: 모든 데이터가 같아서 v_min과 v_max가 같은 경우 빈 폭 강제 확보
+            if v_min == v_max:
+                v_max = v_min + 1.0
+                
+            # v_max를 넘어가는(Overflow) 값들을 v_max 직전 값으로 클리핑하여 마지막 빈에 모이게 함
+            # np.clip을 사용하면 v_max boundary에 걸쳐 마지막 bin에 누적됩니다.
+            clipped_data = np.clip(data, v_min, v_max)
+            
+            return clipped_data, v_min, v_max
 
-        # 4. Invariant Mass (신규 추가)
-        # 유효한 질량값(0 이상)만 플로팅
-        mass_data = s_df[s_df['inv_mass'] > 0]['inv_mass']
-        axes[3].hist(mass_data, bins=50, color='orchid', edgecolor='black')
-        axes[3].set_title("Invariant Mass (GeV)"); axes[3].set_xlabel("Mass")
+        # ----------------------------------------------------
+        # 1. Vertex Resolution
+        # ----------------------------------------------------
+        v_data = s_df['dist_start'].dropna()
+        if not v_data.empty:
+            v_clip, v_min, v_max = get_overflow_adjusted_data(v_data, 0, 90)
+            axes[0].hist(v_clip, bins=50, range=(v_min, v_max), color='salmon', edgecolor='black')
+            axes[0].set_xlim(v_min, v_max * 1.05)  # Overflow 빈이 벽에 딱 붙지 않게 약간의 여백 제공
+        else:
+            axes[0].hist([], bins=50, color='salmon', edgecolor='black')
+        axes[0].set_title("Vertex Resolution (cm)\n[Last Bin: Upper 10% Overflow]"); axes[0].set_xlabel("$\Delta R$")
         
+        # ----------------------------------------------------
+        # 2. Angular Resolution
+        # ----------------------------------------------------
+        a_data = s_df['angle_diff'].dropna()
+        if not a_data.empty:
+            a_clip, a_min, a_max = get_overflow_adjusted_data(a_data, 0, 90)
+            axes[1].hist(a_clip, bins=50, range=(a_min, a_max), color='skyblue', edgecolor='black')
+            axes[1].set_xlim(a_min, a_max * 1.05)
+        else:
+            axes[1].hist([], bins=50, color='skyblue', edgecolor='black')
+        axes[1].set_title("Angular Resolution (rad)\n[Last Bin: Upper 10% Overflow]"); axes[1].set_xlabel("$\Delta \Theta$")
+        
+        # ----------------------------------------------------
+        # 3. Norm Chi2
+        # ----------------------------------------------------
+        c_data = s_df['norm_chi2'].dropna()
+        if not c_data.empty:
+            c_clip, c_min, c_max = get_overflow_adjusted_data(c_data, 0, 90)
+            axes[2].hist(c_clip, bins=50, range=(c_min, c_max), color='limegreen', edgecolor='black')
+            axes[2].set_xlim(c_min, c_max * 1.05)
+            axes[2].set_yscale('log')  # 카이제곱 특성상 로그스케일 유지
+        else:
+            axes[2].hist([], bins=50, color='limegreen', edgecolor='black')
+        axes[2].set_title("$\chi^2 / ndf$\n[Last Bin: Upper 10% Overflow]"); axes[2].set_xlabel("Value")
+
+        # ----------------------------------------------------
+        # 4. Invariant Mass
+        # ----------------------------------------------------
+        mass_data = s_df[s_df['inv_mass'] > 0]['inv_mass'].dropna()
+        if not mass_data.empty:
+            m_clip, m_min, m_max = get_overflow_adjusted_data(mass_data, 0, 90)
+            axes[3].hist(m_clip, bins=50, range=(m_min, m_max), color='orchid', edgecolor='black')
+            axes[3].set_xlim(m_min, m_max * 1.05)
+        else:
+            axes[3].hist([], bins=50, color='orchid', edgecolor='black')
+        axes[3].set_title("Invariant Mass (GeV)\n[Last Bin: Upper 10% Overflow]"); axes[3].set_xlabel("Mass")
+        
+        # ----------------------------------------------------
         plt.tight_layout()
         plt.savefig(f"{OUTPUT_DIR}/Parallel_Summary.png")
 
